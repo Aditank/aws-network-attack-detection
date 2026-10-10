@@ -1,0 +1,32 @@
+# Python Virtual Environment
+venv/
+ENV/
+env/
+
+# Python Cache & Bytecode
+__pycache__/
+*.py[cod]
+*$py.class
+.pytest_cache/
+
+# Datasets (Keep raw and processed CSVs out of Git repository)
+data/raw/*
+!data/raw/.gitkeep
+data/processed/*
+!data/processed/.gitkeep
+
+# ML Model Outputs & Checkpoints
+models/*
+!models/.gitkeep
+
+# OS / Editor Files
+.DS_Store
+Thumbs.db
+.vscode/
+.idea/
+*.swp
+
+# Environment Variables & Credentials
+.env
+*.pem
+*.key
