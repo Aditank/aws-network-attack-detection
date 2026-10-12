@@ -18,6 +18,7 @@ data/processed/*
 # ML Model Outputs & Checkpoints
 models/*
 !models/.gitkeep
+!models/random_forest_model.joblib
 
 # OS / Editor Files
 .DS_Store

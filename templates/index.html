@@ -1,0 +1,160 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <meta name="description" content="AWS Cloud-Based Network Attack Detection and Alerting System. Dual-engine cybersecurity dashboard combining Rule-Based IDS with Random Forest Machine Learning.">
+    <title>AWS Network Attack Detection & Security Dashboard</title>
+    <link rel="preconnect" href="https://fonts.googleapis.com">
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+    <link href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700&family=JetBrains+Mono:wght@400;500;700&display=swap" rel="stylesheet">
+    <link rel="stylesheet" href="/static/style.css">
+</head>
+<body>
+    <!-- Top Navigation Header -->
+    <header class="header">
+        <div class="header-container">
+            <div class="brand">
+                <div class="logo-shield">
+                    <svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                        <path d="M12 22s8-4 8-10V5l-8-3-8 3v7c0 6 8 10 8 10z"/>
+                        <circle cx="12" cy="11" r="3"/>
+                    </svg>
+                </div>
+                <div>
+                    <h1 class="brand-title">AWS Cloud Attack Detector</h1>
+                    <span class="brand-subtitle">Dual-Engine Cybersecurity SOC Dashboard • CIC-IDS2017</span>
+                </div>
+            </div>
+            <div class="system-status">
+                <div class="status-indicator live"></div>
+                <span id="system-status-text">ENGINES ONLINE</span>
+                <span class="badge badge-aws">AWS Architecture Ready</span>
+            </div>
+        </div>
+    </header>
+
+    <!-- Main Dashboard Container -->
+    <main class="dashboard-container">
+        
+        <!-- Controls & Upload Section -->
+        <section class="panel upload-panel">
+            <div class="panel-header">
+                <h2>Traffic Ingestion & Flow Analysis</h2>
+                <p>Upload raw network flow capture CSV files to trigger heuristic rules and Random Forest ML inference.</p>
+            </div>
+
+            <div class="upload-grid">
+                <!-- Dropzone Area -->
+                <div id="drop-zone" class="drop-zone">
+                    <input type="file" id="file-input" accept=".csv" class="file-input">
+                    <div class="drop-zone-content">
+                        <div class="upload-icon">
+                            <svg width="40" height="40" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8">
+                                <path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/>
+                                <polyline points="17 8 12 3 7 8"/>
+                                <line x1="12" y1="3" x2="12" y2="15"/>
+                            </svg>
+                        </div>
+                        <h3 id="file-name-label">Drag & Drop Flow CSV File</h3>
+                        <p>or click to browse your computer (Max 16MB)</p>
+                    </div>
+                </div>
+
+                <!-- Action Buttons & Quick Test -->
+                <div class="actions-card">
+                    <h3>Quick Actions</h3>
+                    <p>Analyze uploaded traffic or use our sample generator for an immediate demonstration.</p>
+                    
+                    <button id="btn-analyze" class="btn btn-primary" disabled>
+                        <span class="btn-text">Run Security Analysis</span>
+                        <div class="spinner" id="analyze-spinner"></div>
+                    </button>
+                    
+                    <button id="btn-quick-sample" class="btn btn-outline">
+                        <span>⚡ Load CIC-IDS2017 Sample Flow (30 Records)</span>
+                    </button>
+
+                    <div class="engine-badge-row">
+                        <span class="engine-pill">🛡️ Rule Engine: 4 Signatures</span>
+                        <span class="engine-pill">🤖 Random Forest: 100 Trees (78 Features)</span>
+                    </div>
+                </div>
+            </div>
+
+            <div id="alert-banner" class="alert-banner hidden"></div>
+        </section>
+
+        <!-- KPI Metrics Grid -->
+        <section id="metrics-section" class="metrics-grid hidden">
+            <!-- Total Flows -->
+            <div class="metric-card">
+                <span class="metric-title">TOTAL ANALYZED FLOWS</span>
+                <span id="metric-total-flows" class="metric-value">0</span>
+                <span class="metric-subtext">Processed Network Records</span>
+            </div>
+
+            <!-- ML Attack Detections -->
+            <div class="metric-card metric-danger">
+                <span class="metric-title">ML ATTACKS DETECTED</span>
+                <span id="metric-ml-attacks" class="metric-value danger-text">0</span>
+                <span id="metric-ml-rate" class="metric-subtext">0% of traffic flagged</span>
+            </div>
+
+            <!-- Rule Detections -->
+            <div class="metric-card metric-warning">
+                <span class="metric-title">RULE SIGNATURE HITS</span>
+                <span id="metric-rule-attacks" class="metric-value warning-text">0</span>
+                <span class="metric-subtext">Static Heuristic Alerts</span>
+            </div>
+
+            <!-- Agreement & Latency -->
+            <div class="metric-card metric-success">
+                <span class="metric-title">ENGINE AGREEMENT</span>
+                <span id="metric-agreement" class="metric-value success-text">0%</span>
+                <span id="metric-latency" class="metric-subtext">Latency: 0 ms</span>
+            </div>
+        </section>
+
+        <!-- Threat Breakdown & Evidence Table -->
+        <section id="results-section" class="panel results-panel hidden">
+            <div class="panel-header flex-between">
+                <div>
+                    <h2>Suspicious Flow Records & Forensic Evidence</h2>
+                    <p>Detailed breakdown of detected intrusions, triggered heuristics, and machine learning confidence.</p>
+                </div>
+                <div id="attack-breakdown-tags" class="attack-tags-container"></div>
+            </div>
+
+            <div class="table-container">
+                <table class="data-table" id="evidence-table">
+                    <thead>
+                        <tr>
+                            <th># ID</th>
+                            <th>Severity</th>
+                            <th>Target Port</th>
+                            <th>Duration (µs)</th>
+                            <th>Total Packets</th>
+                            <th>Flow Bytes/s</th>
+                            <th>Rule Verdict</th>
+                            <th>ML Verdict</th>
+                            <th>ML Confidence</th>
+                        </tr>
+                    </thead>
+                    <tbody id="evidence-table-body">
+                        <!-- Populated by JS -->
+                    </tbody>
+                </table>
+            </div>
+        </section>
+
+    </main>
+
+    <!-- Footer -->
+    <footer class="footer">
+        <p>AWS Cloud-Based Network Attack Detection and Alerting System • Phase 5 Flask Dashboard</p>
+    </footer>
+
+    <script src="/static/script.js"></script>
+</body>
+</html>
