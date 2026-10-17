@@ -1,18 +1,318 @@
 """
-Dataset Preparation Script for AWS Network Attack Detection & Alerting System
-Generates a standard, realistic sample of CIC-IDS2017 network traffic flows
-with benign and malicious attack traffic (DDoS, PortScan, Bot, SSH-Patator).
-Includes characteristic real-world quirks like infinite values and column spaces.
+Dataset Downloader & Organizer for Authentic CIC-IDS2017 Dataset
+================================================================
+
+Downloads and organizes genuine CIC-IDS network flow data from KaggleHub
+('dhoogla/cicidscollection').
+
+Guarantees:
+-----------
+1. Downloads authentic data via kagglehub without silent substitutions.
+2. Recursively inspects the download directory.
+   - If genuine CSVs are present, validates headers and organizes them.
+   - If the collection is distributed as Parquet (as in dhoogla/cicidscollection),
+     exports authentic network flow CSV partitions preserving original labels.
+3. Organizes verified authentic CSV files under 'data/raw/cicids2017/'.
+4. Does NOT generate synthetic data by default.
+5. Fails clearly if network, authentication, or dataset download issues arise.
 """
 
 import os
-import numpy as np
+import sys
+import shutil
+import logging
+from pathlib import Path
+from typing import List, Dict, Optional, Tuple
 import pandas as pd
 
-def generate_cicids2017_sample(output_path="data/raw/cicids2017_sample.csv", n_samples=3000, random_state=42):
+if sys.stdout and hasattr(sys.stdout, "reconfigure"):
+    try:
+        sys.stdout.reconfigure(encoding="utf-8", errors="replace")
+    except Exception:
+        pass
+
+logging.basicConfig(level=logging.INFO, format="[%(levelname)s] %(message)s")
+log = logging.getLogger(__name__)
+
+TARGET_RAW_DIR = os.path.join("data", "raw", "cicids2017")
+KAGGLE_DATASET_HANDLE = "dhoogla/cicidscollection"
+
+EXPECTED_FLOW_SIGNATURE_COLS = {
+    "destination port",
+    "flow duration",
+    "total fwd packets",
+    "total backward packets",
+    "flow bytes/s",
+    "fwd packets length total",
+    "flow packets/s",
+}
+
+
+def validate_cicids_csv(file_path: str) -> Tuple[bool, str, List[str], Dict[str, int]]:
+    """
+    Validate that a CSV file is a genuine CIC-IDS network flow dataset.
+    Checks:
+    - File readability
+    - Presence of 'Label' column
+    - Presence of key network flow features
+    - Sample class distribution
+
+    Returns:
+        (is_valid, reason, stripped_columns, sample_class_counts)
+    """
+    try:
+        sample_df = pd.read_csv(file_path, nrows=500, encoding="utf-8", low_memory=False)
+    except UnicodeDecodeError:
+        try:
+            sample_df = pd.read_csv(file_path, nrows=500, encoding="latin-1", low_memory=False)
+        except Exception as e:
+            return False, f"Failed to parse CSV: {e}", [], {}
+    except Exception as e:
+        return False, f"Failed to read CSV: {e}", [], {}
+
+    if sample_df.empty or sample_df.shape[1] < 5:
+        return False, "File is empty or has fewer than 5 columns", [], {}
+
+    stripped_cols = [str(c).strip() for c in sample_df.columns]
+    lower_cols = {c.lower(): c for c in stripped_cols}
+
+    # 1. Validate 'Label' column exists
+    label_col_actual = None
+    for cand in ["label", "class", "classlabel"]:
+        if cand in lower_cols:
+            label_col_actual = lower_cols[cand]
+            break
+
+    if not label_col_actual:
+        return False, f"Missing required 'Label' column (found: {stripped_cols[:8]}...)", stripped_cols, {}
+
+    # 2. Check for network flow signatures
+    matched_sigs = [sig for sig in EXPECTED_FLOW_SIGNATURE_COLS if sig in lower_cols]
+    if len(matched_sigs) < 2:
+        return False, f"Does not appear to be a CIC-IDS flow dataset (matched only {matched_sigs})", stripped_cols, {}
+
+    class_counts = sample_df.iloc[:, [stripped_cols.index(label_col_actual)]].iloc[:, 0].astype(str).str.strip().value_counts().to_dict()
+
+    return True, "Valid CIC-IDS flow CSV", stripped_cols, class_counts
+
+
+def _export_parquet_to_authentic_csvs(
+    parquet_path: str,
+    target_dir: str,
+    sample_size: int = 100000,
+) -> List[str]:
+    """
+    Extracts authentic CIC-IDS flow partitions from Kaggle Parquet format
+    into genuine, standard CSV files under target_dir.
+    """
+    try:
+        import pyarrow.parquet as pq
+    except ImportError:
+        raise ImportError("pyarrow is required to parse parquet: pip install pyarrow")
+
+    print(f"\n[EXTRACT] Reading authentic flows from Parquet collection: {parquet_path}")
+    table = pq.read_table(parquet_path)
+    df = table.to_pandas()
+
+    print(f"   Total Authentic Rows in Parquet: {len(df):,}")
+    print(f"   Available Attack Classes: {df['Label'].nunique()} categories")
+
+    # Rename ClassLabel or ensure Label has the specific attack names
+    if "Label" in df.columns and "ClassLabel" in df.columns:
+        # Standardize: Label contains the attack type (DDoS, Portscan, etc.)
+        pass
+
+    os.makedirs(target_dir, exist_ok=True)
+    generated_csvs = []
+
+    # 1. General balanced authentic dataset (100,000 flows)
+    benign_df = df[df["Label"].str.upper() == "BENIGN"]
+    attack_df = df[df["Label"].str.upper() != "BENIGN"]
+
+    n_attack = min(len(attack_df), int(sample_size * 0.35))
+    n_benign = min(len(benign_df), sample_size - n_attack)
+
+    atk_sample = attack_df.sample(n=n_attack, random_state=42)
+    ben_sample = benign_df.sample(n=n_benign, random_state=42)
+    combined_sample = pd.concat([ben_sample, atk_sample]).sample(frac=1.0, random_state=42)
+
+    p1 = os.path.join(target_dir, "cicids_authentic_traffic.csv")
+    combined_sample.to_csv(p1, index=False)
+    generated_csvs.append(p1)
+    print(f"   [CREATED] {p1} ({len(combined_sample):,} rows, {os.path.getsize(p1)/(1024*1024):.2f} MB)")
+
+    # 2. Authentic DDoS-specific partition
+    ddos_attacks = attack_df[attack_df["Label"].str.contains("DDoS", case=False, na=False)]
+    if not ddos_attacks.empty:
+        n_ddos = min(len(ddos_attacks), 15000)
+        n_ben = min(len(benign_df), 35000)
+        ddos_sample = pd.concat([
+            benign_df.sample(n=n_ben, random_state=42),
+            ddos_attacks.sample(n=n_ddos, random_state=42),
+        ]).sample(frac=1.0, random_state=42)
+        p2 = os.path.join(target_dir, "cicids_ddos_partition.csv")
+        ddos_sample.to_csv(p2, index=False)
+        generated_csvs.append(p2)
+        print(f"   [CREATED] {p2} ({len(ddos_sample):,} rows, {os.path.getsize(p2)/(1024*1024):.2f} MB)")
+
+    # 3. Authentic Bruteforce & Scanning partition
+    probe_attacks = attack_df[
+        attack_df["Label"].str.contains("Bruteforce|Portscan|SSH", case=False, na=False)
+    ]
+    if not probe_attacks.empty:
+        n_probe = min(len(probe_attacks), 15000)
+        n_ben = min(len(benign_df), 25000)
+        probe_sample = pd.concat([
+            benign_df.sample(n=n_ben, random_state=42),
+            probe_attacks.sample(n=n_probe, random_state=42),
+        ]).sample(frac=1.0, random_state=42)
+        p3 = os.path.join(target_dir, "cicids_bruteforce_probe_partition.csv")
+        probe_sample.to_csv(p3, index=False)
+        generated_csvs.append(p3)
+        print(f"   [CREATED] {p3} ({len(probe_sample):,} rows, {os.path.getsize(p3)/(1024*1024):.2f} MB)")
+
+    return generated_csvs
+
+
+def download_and_organize_cicids(
+    target_dir: str = TARGET_RAW_DIR,
+    dataset_handle: str = KAGGLE_DATASET_HANDLE,
+    copy_files: bool = True,
+) -> Dict[str, any]:
+    """
+    Downloads the CIC-IDS collection from KaggleHub and organizes
+    valid CIC-IDS2017 files under target_dir.
+    """
+    try:
+        import kagglehub
+    except ImportError:
+        raise ImportError(
+            "kagglehub is required. Install it using: pip install kagglehub"
+        )
+
+    print("=" * 75)
+    print(f"[DOWNLOAD] DOWNLOADING AUTHENTIC CIC-IDS DATASET VIA KAGGLEHUB")
+    print(f"   Handle: {dataset_handle}")
+    print("=" * 75)
+
+    try:
+        download_path = kagglehub.dataset_download(dataset_handle)
+    except Exception as exc:
+        print(f"\n[ERROR] Failed to download dataset via KaggleHub: {exc}")
+        print("\nPossible causes:")
+        print("1. No internet connectivity.")
+        print("2. KaggleHub authentication / rate limit.")
+        print("3. Dataset handle moved or unavailable.")
+        raise RuntimeError(f"KaggleHub download failed: {exc}") from exc
+
+    print(f"\n[OK] Download completed successfully!")
+    print(f"   Kaggle cache location: {download_path}")
+
+    # Inspect downloaded files recursively
+    print("\n[SCAN] Recursively scanning downloaded files...")
+    all_files = list(Path(download_path).rglob("*"))
+    csv_candidates = [f for f in all_files if f.is_file() and f.suffix.lower() == ".csv"]
+    parquet_candidates = [f for f in all_files if f.is_file() and f.suffix.lower() == ".parquet"]
+
+    print(f"   Total items discovered:   {len(all_files)}")
+    print(f"   CSV files discovered:     {len(csv_candidates)}")
+    print(f"   Parquet files discovered: {len(parquet_candidates)}")
+
+    os.makedirs(target_dir, exist_ok=True)
+    verified_files = []
+    rejected_files = []
+
+    # If genuine CSV files are present in the Kaggle package
+    if csv_candidates:
+        print("\n[VALIDATION] Validating candidate CSV headers against CIC-IDS schema:")
+        for csv_file in csv_candidates:
+            size_mb = csv_file.stat().st_size / (1024 * 1024)
+            is_valid, reason, cols, sample_classes = validate_cicids_csv(str(csv_file))
+
+            if is_valid:
+                print(f"   [VALID]   {csv_file.name} ({size_mb:.2f} MB)")
+                print(f"             Classes in sample: {list(sample_classes.keys())[:5]}")
+                dest_file = os.path.join(target_dir, csv_file.name)
+                if copy_files:
+                    if not os.path.exists(dest_file) or os.path.getsize(dest_file) != csv_file.stat().st_size:
+                        print(f"             -> Copying to {dest_file}...")
+                        shutil.copy2(str(csv_file), dest_file)
+                    else:
+                        print(f"             -> Already present in {dest_file}")
+                verified_files.append({
+                    "original_path": str(csv_file),
+                    "dest_path": dest_file,
+                    "filename": csv_file.name,
+                    "size_mb": round(size_mb, 2),
+                    "total_columns": len(cols),
+                    "sample_classes": sample_classes,
+                })
+            else:
+                print(f"   [EXCLUDE] {csv_file.name} ({size_mb:.2f} MB) - Reason: {reason}")
+                rejected_files.append({
+                    "path": str(csv_file),
+                    "filename": csv_file.name,
+                    "reason": reason,
+                })
+
+    # If the Kaggle dataset is packaged as authentic Parquet
+    elif parquet_candidates:
+        print("\n[INFO] Dataset is packaged as authentic Parquet collection.")
+        print(f"       Exporting authentic partitions to genuine CSV files in {target_dir}...")
+        exported = _export_parquet_to_authentic_csvs(str(parquet_candidates[0]), target_dir)
+        for exp_path in exported:
+            size_mb = os.path.getsize(exp_path) / (1024 * 1024)
+            is_valid, reason, cols, sample_classes = validate_cicids_csv(exp_path)
+            if is_valid:
+                verified_files.append({
+                    "original_path": str(parquet_candidates[0]),
+                    "dest_path": exp_path,
+                    "filename": os.path.basename(exp_path),
+                    "size_mb": round(size_mb, 2),
+                    "total_columns": len(cols),
+                    "sample_classes": sample_classes,
+                })
+
+    else:
+        raise FileNotFoundError(
+            f"No CSV or Parquet data files found in downloaded directory: {download_path}"
+        )
+
+    print("=" * 75)
+    print(f"[COMPLETE] CIC-IDS2017 ORGANIZED SUCCESSFULLY")
+    print(f"   Target Directory:         {os.path.abspath(target_dir)}")
+    print(f"   Verified Authentic CSVs:   {len(verified_files)}")
+    print(f"   Excluded Non-Flow CSVs:   {len(rejected_files)}")
+    print("=" * 75)
+
+    return {
+        "source_handle": dataset_handle,
+        "kaggle_cache_path": download_path,
+        "target_dir": target_dir,
+        "verified_files": verified_files,
+        "rejected_files": rejected_files,
+    }
+
+
+def generate_synthetic_demo_data(
+    output_path: str = "data/raw/synthetic_demo.csv",
+    n_samples: int = 3000,
+    random_state: int = 42,
+):
+    """
+    EXPLICIT DEMO DATA GENERATOR.
+    Only run when explicitly requested via --generate-demo.
+    Never run by default. Clearly marks output as SYNTHETIC.
+    """
+    import numpy as np
+
+    print("=" * 75)
+    print("[WARNING] GENERATING SYNTHETIC DEMO TRAFFIC DATA")
+    print("   WARNING: This data is ARTIFICIAL and NOT authentic network traffic.")
+    print(f"   Output destination: {output_path}")
+    print("=" * 75)
+
     np.random.seed(random_state)
-    
-    # Standard CIC-IDS2017 Column names (with authentic whitespace quirks)
     columns = [
         " Destination Port", " Flow Duration", " Total Fwd Packets", " Total Backward Packets",
         "Total Length of Fwd Packets", " Total Length of Bwd Packets", " Fwd Packet Length Max",
@@ -35,160 +335,32 @@ def generate_cicids2017_sample(output_path="data/raw/cicids2017_sample.csv", n_s
         " min_seg_size_forward", "Active Mean", " Active Std", " Active Max", " Active Min",
         "Idle Mean", " Idle Std", " Idle Max", " Idle Min", " Label"
     ]
-    
-    # Label Distribution: 70% Benign, 15% DDoS, 8% PortScan, 4% Bot, 3% SSH-Patator
+
     labels = ["BENIGN"] * int(n_samples * 0.70) + \
              ["DDoS"] * int(n_samples * 0.15) + \
              ["PortScan"] * int(n_samples * 0.08) + \
              ["Bot"] * int(n_samples * 0.04) + \
              ["SSH-Patator"] * int(n_samples * 0.03)
-    
-    # Shuffle labels
-    labels = np.random.choice(labels, size=len(labels), replace=False)
-    actual_samples = len(labels)
-    
-    data = {}
-    
-    # Generate feature values based on traffic type characteristics
-    dest_ports = []
-    durations = []
-    fwd_pkts = []
-    bwd_pkts = []
-    fwd_len_mean = []
-    bwd_len_mean = []
-    syn_flags = []
-    ack_flags = []
-    psh_flags = []
-    flow_bytes_s = []
-    flow_pkts_s = []
-    
-    for lbl in labels:
-        if lbl == "BENIGN":
-            dest_ports.append(np.random.choice([80, 443, 53, 22, 8080, 49152]))
-            dur = np.random.exponential(scale=50000) + 100
-            fp = np.random.randint(1, 25)
-            bp = np.random.randint(1, 30)
-            flm = np.random.uniform(40, 500)
-            blm = np.random.uniform(40, 1200)
-            syn = 1 if np.random.rand() < 0.15 else 0
-            ack = 1 if np.random.rand() < 0.80 else 0
-            psh = 1 if np.random.rand() < 0.40 else 0
-        elif lbl == "DDoS":
-            dest_ports.append(80)
-            dur = np.random.exponential(scale=5000) + 10
-            fp = np.random.randint(100, 1000)
-            bp = np.random.randint(0, 5)
-            flm = np.random.uniform(500, 1460)
-            blm = np.random.uniform(0, 60)
-            syn = 1 if np.random.rand() < 0.95 else 0
-            ack = 0 if np.random.rand() < 0.85 else 1
-            psh = 0
-        elif lbl == "PortScan":
-            dest_ports.append(np.random.randint(1, 1024))
-            dur = np.random.uniform(1, 500)
-            fp = np.random.randint(1, 3)
-            bp = 0
-            flm = np.random.uniform(0, 60)
-            blm = 0
-            syn = 1
-            ack = 0
-            psh = 0
-        elif lbl == "Bot":
-            dest_ports.append(np.random.choice([8080, 6667, 80]))
-            dur = np.random.exponential(scale=100000)
-            fp = np.random.randint(10, 80)
-            bp = np.random.randint(10, 80)
-            flm = np.random.uniform(100, 400)
-            blm = np.random.uniform(100, 400)
-            syn = 0
-            ack = 1
-            psh = 1 if np.random.rand() < 0.6 else 0
-        elif lbl == "SSH-Patator":
-            dest_ports.append(22)
-            dur = np.random.uniform(1000, 20000)
-            fp = np.random.randint(15, 50)
-            bp = np.random.randint(15, 50)
-            flm = np.random.uniform(200, 600)
-            blm = np.random.uniform(200, 600)
-            syn = 1 if np.random.rand() < 0.3 else 0
-            ack = 1
-            psh = 1
-            
-        durations.append(dur)
-        fwd_pkts.append(fp)
-        bwd_pkts.append(bp)
-        fwd_len_mean.append(flm)
-        bwd_len_mean.append(blm)
-        syn_flags.append(syn)
-        ack_flags.append(ack)
-        psh_flags.append(psh)
-        
-        # Calculate rates with intentional division by zero / Inf quirks (matching real CIC-IDS2017)
-        total_bytes = (fp * flm) + (bp * blm)
-        total_pkts = fp + bp
-        dur_sec = dur / 1e6  # duration in seconds
-        
-        if dur_sec <= 0.00001 and np.random.rand() < 0.05:
-            flow_bytes_s.append(np.inf) # Real dataset artifact
-            flow_pkts_s.append(np.inf)  # Real dataset artifact
-        else:
-            flow_bytes_s.append(total_bytes / max(dur_sec, 0.0001))
-            flow_pkts_s.append(total_pkts / max(dur_sec, 0.0001))
+    np.random.shuffle(labels)
 
-    # Populate DataFrame columns
-    df = pd.DataFrame()
-    df[" Destination Port"] = dest_ports
-    df[" Flow Duration"] = np.array(durations, dtype=np.int64)
-    df[" Total Fwd Packets"] = fwd_pkts
-    df[" Total Backward Packets"] = bwd_pkts
-    df["Total Length of Fwd Packets"] = np.array(fwd_pkts) * np.array(fwd_len_mean)
-    df[" Total Length of Bwd Packets"] = np.array(bwd_pkts) * np.array(bwd_len_mean)
-    df[" Fwd Packet Length Max"] = np.array(fwd_len_mean) * 1.5
-    df[" Fwd Packet Length Min"] = np.maximum(0, np.array(fwd_len_mean) * 0.5)
-    df[" Fwd Packet Length Mean"] = fwd_len_mean
-    df[" Fwd Packet Length Std"] = np.array(fwd_len_mean) * 0.25
-    df["Bwd Packet Length Max"] = np.array(bwd_len_mean) * 1.5
-    df[" Bwd Packet Length Min"] = np.maximum(0, np.array(bwd_len_mean) * 0.5)
-    df[" Bwd Packet Length Mean"] = bwd_len_mean
-    df[" Bwd Packet Length Std"] = np.array(bwd_len_mean) * 0.25
-    
-    df["Flow Bytes/s"] = flow_bytes_s
-    df[" Flow Packets/s"] = flow_pkts_s
-    
-    df[" Flow IAT Mean"] = np.array(durations) / np.maximum(1, np.array(fwd_pkts) + np.array(bwd_pkts))
-    df[" Flow IAT Std"] = df[" Flow IAT Mean"] * 0.3
-    df[" Flow IAT Max"] = df[" Flow IAT Mean"] * 2.0
-    df[" Flow IAT Min"] = np.maximum(0, df[" Flow IAT Mean"] * 0.1)
-    
-    # Fill remaining required columns with simulated values
-    for col in columns:
-        if col not in df.columns and col != " Label":
-            if "Flags" in col or "Flag Count" in col:
-                if "SYN" in col:
-                    df[col] = syn_flags
-                elif "ACK" in col:
-                    df[col] = ack_flags
-                elif "PSH" in col:
-                    df[col] = psh_flags
-                else:
-                    df[col] = 0
-            elif "Header Length" in col:
-                df[col] = np.random.choice([20, 32, 40], size=actual_samples)
-            else:
-                df[col] = np.random.uniform(0, 100, size=actual_samples)
-                
-    # Add labels column
-    df[" Label"] = labels
-    
-    # Introduce some NaN values to replicate real dataset quality issues
-    nan_indices = np.random.choice(actual_samples, size=int(actual_samples * 0.01), replace=False)
-    df.loc[nan_indices, "Flow Bytes/s"] = np.nan
+    data = {c: np.random.uniform(10, 100, size=len(labels)) for c in columns if c != " Label"}
+    data[" Label"] = labels
 
-    # Create target folder if it doesn't exist
     os.makedirs(os.path.dirname(output_path), exist_ok=True)
+    df = pd.DataFrame(data)
     df.to_csv(output_path, index=False)
-    print(f"✅ Generated {len(df)} records saved to {output_path}")
-    print(f"📊 Class distribution:\n{df[' Label'].value_counts()}")
+    print(f"[OK] Saved synthetic demo dataset ({len(df)} rows) to {output_path}")
+
 
 if __name__ == "__main__":
-    generate_cicids2017_sample()
+    import argparse
+    parser = argparse.ArgumentParser(description="Download and organize genuine CIC-IDS2017 dataset via KaggleHub")
+    parser.add_argument("--target-dir", default=TARGET_RAW_DIR, help="Destination directory for raw CIC-IDS2017 CSVs")
+    parser.add_argument("--dataset-handle", default=KAGGLE_DATASET_HANDLE, help="KaggleHub dataset handle")
+    parser.add_argument("--generate-demo", action="store_true", help="Explicitly generate artificial demo data (NOT real)")
+    args = parser.parse_args()
+
+    if args.generate_demo:
+        generate_synthetic_demo_data()
+    else:
+        download_and_organize_cicids(target_dir=args.target_dir, dataset_handle=args.dataset_handle)

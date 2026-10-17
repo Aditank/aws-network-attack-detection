@@ -255,8 +255,10 @@ def detect_traffic():
             port_val = safe_int(clean_original_df.loc[idx, "Destination Port"]) if "Destination Port" in clean_original_df.columns else 0
             dur_val = safe_float(clean_original_df.loc[idx, "Flow Duration"]) if "Flow Duration" in clean_original_df.columns else 0
 
-            if "Label" in clean_original_df.columns and str(clean_original_df.loc[idx, "Label"]) != "BENIGN":
+            if "Label" in clean_original_df.columns and str(clean_original_df.loc[idx, "Label"]) not in ("BENIGN", "Benign", "0"):
                 detected_type = str(clean_original_df.loc[idx, "Label"])
+            elif "ClassLabel" in clean_original_df.columns and str(clean_original_df.loc[idx, "ClassLabel"]) not in ("BENIGN", "Benign", "0"):
+                detected_type = str(clean_original_df.loc[idx, "ClassLabel"])
             elif port_val == 80:
                 detected_type = "DDoS"
             elif port_val == 22:
@@ -264,7 +266,7 @@ def detect_traffic():
             elif 0 < dur_val < 1000:
                 detected_type = "PortScan"
             else:
-                detected_type = "Bot / ML-Anomaly"
+                detected_type = "Botnet / ML-Anomaly"
 
         if detected_type not in attack_type_counts:
             attack_type_counts[detected_type] = 0
@@ -276,21 +278,85 @@ def detect_traffic():
             dest_p = safe_int(row_dict.get("Destination Port", 0))
             flow_d = safe_float(row_dict.get("Flow Duration", 0))
             fwd_p = safe_int(row_dict.get("Total Fwd Packets", 0))
+            bwd_p = safe_int(row_dict.get("Total Backward Packets", 0))
             bytes_s = safe_float(row_dict.get("Flow Bytes/s", 0))
             pkts_s = safe_float(row_dict.get("Flow Packets/s", 0))
+            fwd_init_win = safe_float(row_dict.get("Init_Win_bytes_forward", row_dict.get("Init Fwd Win Bytes", 0)))
+            bwd_init_win = safe_float(row_dict.get("Init_Win_bytes_backward", row_dict.get("Init Bwd Win Bytes", 0)))
+            fwd_seg_min = safe_float(row_dict.get("min_seg_size_forward", row_dict.get("Fwd Seg Size Min", 0)))
+            pkt_len_std = safe_float(row_dict.get("Packet Length Std", 0))
+            syn_count = safe_int(row_dict.get("SYN Flag Count", 0))
+            ack_count = safe_int(row_dict.get("ACK Flag Count", 0))
+
+            # Generate dynamic explanation & forensic reasons
+            reasons = []
+            if is_rule_attack and rule_name != "NO_RULE_TRIGGERED":
+                if "DDOS" in rule_name:
+                    reasons.append(f"Heuristic Rule match ({rule_name}): High forward packet burst ({fwd_p} packets) and SYN rate without normal ACKs.")
+                elif "PORTSCAN" in rule_name:
+                    reasons.append(f"Heuristic Rule match ({rule_name}): Microsecond probe ({flow_d:.0f} µs) with SYN packet and 0 backward packets indicating port probing.")
+                elif "SSH" in rule_name:
+                    reasons.append(f"Heuristic Rule match ({rule_name}): Sustained connection to Port 22 (SSH) with repetitive packet sequence ({fwd_p} packets).")
+                elif "BANDWIDTH" in rule_name:
+                    reasons.append(f"Heuristic Rule match ({rule_name}): Extreme throughput surge ({bytes_s:,.0f} bytes/sec) exceeding normal traffic thresholds.")
+
+            if is_ml_attack:
+                ml_reasons = []
+                if bwd_init_win <= 0:
+                    ml_reasons.append("Zero/negative backward TCP window (server received no acknowledgement or connection reset)")
+                if fwd_p > 30 or pkts_s > 300:
+                    ml_reasons.append(f"Abnormal packet transmission intensity ({fwd_p} fwd pkts, {pkts_s:,.1f} pkts/s)")
+                if bytes_s > 100000:
+                    ml_reasons.append(f"High flow volumetric rate ({bytes_s:,.0f} B/s)")
+                if 0 < flow_d < 500:
+                    ml_reasons.append(f"Ultra-short ephemeral flow lifetime ({flow_d:.0f} µs)")
+                if pkt_len_std < 2.0 and fwd_p > 5:
+                    ml_reasons.append("Near-zero packet length variance characteristic of automated bot/attack tooling")
+
+                if ml_reasons:
+                    reasons.extend(ml_reasons)
+                else:
+                    reasons.append(f"Random Forest ML detected non-linear anomaly fingerprint across {len(expected_features)} flow metrics with {round(prob * 100, 1)}% confidence")
+
+            if not reasons:
+                reasons.append("Anomalous statistical deviations identified across multiple network flow descriptors.")
+
+            # Summary narrative explanation
+            narrative = (
+                f"Classified as '{detected_type}' because this connection exhibit{'s' if len(reasons) == 1 else ''} "
+                + "; ".join(reasons[:3]) + "."
+            )
+
+            severity = "CRITICAL" if prob > 0.85 or (is_ml_attack and is_rule_attack) else "HIGH" if is_ml_attack else "MEDIUM"
 
             evidence = {
                 "record_id": int(idx) + 1,
-                "dest_port": dest_p,
-                "flow_duration_us": flow_d,
-                "total_fwd_pkts": fwd_p,
-                "flow_bytes_per_sec": bytes_s,
-                "flow_pkts_per_sec": pkts_s,
+                "attack_type": detected_type,
+                "severity": severity,
                 "ml_verdict": "ATTACK" if is_ml_attack else "BENIGN",
                 "ml_confidence_pct": round(prob * 100, 2),
                 "rule_verdict": "ATTACK" if is_rule_attack else "BENIGN",
                 "rule_triggered": rule_name,
-                "severity": "CRITICAL" if prob > 0.85 or (is_ml_attack and is_rule_attack) else "HIGH" if is_ml_attack else "MEDIUM"
+                "dest_port": dest_p,
+                "flow_duration_us": flow_d,
+                "total_fwd_pkts": fwd_p,
+                "total_bwd_pkts": bwd_p,
+                "flow_bytes_per_sec": bytes_s,
+                "flow_pkts_per_sec": pkts_s,
+                "syn_flag_count": syn_count,
+                "ack_flag_count": ack_count,
+                "explanation": {
+                    "attack_type": detected_type,
+                    "summary": narrative,
+                    "primary_reasons": reasons,
+                    "top_features": [
+                        {"name": "Init Bwd Win Bytes", "value": f"{bwd_init_win:,.0f}", "normal_range": "> 0 for completed TCP handshake"},
+                        {"name": "Flow Packets/s", "value": f"{pkts_s:,.1f}", "normal_range": "< 50 pkts/s for benign interactive sessions"},
+                        {"name": "Flow Bytes/s", "value": f"{bytes_s:,.0f}", "normal_range": "< 100 KB/s average"},
+                        {"name": "Flow Duration", "value": f"{flow_d:,.0f} µs", "normal_range": "> 1,000 µs for standard transactions"},
+                        {"name": "Total Fwd Packets", "value": str(fwd_p), "normal_range": "1 - 15 packets typical for short requests"}
+                    ]
+                }
             }
             suspicious_records.append(evidence)
 

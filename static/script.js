@@ -148,24 +148,121 @@ document.addEventListener("DOMContentLoaded", () => {
             }
         }
 
+        // Modal elements
+        const attackModal = document.getElementById("attack-modal");
+        const modalCloseBtn = document.getElementById("modal-close-btn");
+        const modalDismissBtn = document.getElementById("modal-dismiss-btn");
+        const modalSeverityBadge = document.getElementById("modal-severity-badge");
+        const modalAttackTitle = document.getElementById("modal-attack-title");
+        const modalRecordId = document.getElementById("modal-record-id");
+        const modalExplanationSummary = document.getElementById("modal-explanation-summary");
+        const modalReasonsList = document.getElementById("modal-reasons-list");
+        const modalFeaturesGrid = document.getElementById("modal-features-grid");
+        const modalMlVerdict = document.getElementById("modal-ml-verdict");
+        const modalMlConfidence = document.getElementById("modal-ml-confidence");
+        const modalRuleVerdict = document.getElementById("modal-rule-verdict");
+        const modalRuleName = document.getElementById("modal-rule-name");
+
+        function closeModal() {
+            if (attackModal) attackModal.classList.add("hidden");
+        }
+
+        if (modalCloseBtn) modalCloseBtn.addEventListener("click", closeModal);
+        if (modalDismissBtn) modalDismissBtn.addEventListener("click", closeModal);
+        if (attackModal) {
+            attackModal.addEventListener("click", (e) => {
+                if (e.target === attackModal) closeModal();
+            });
+        }
+
+        document.addEventListener("keydown", (e) => {
+            if (e.key === "Escape" && attackModal && !attackModal.classList.contains("hidden")) {
+                closeModal();
+            }
+        });
+
+        function openAttackModal(rec) {
+            const exp = rec.explanation || {};
+            const attackName = exp.attack_type || rec.attack_type || "Network Attack";
+
+            modalSeverityBadge.className = `badge-severity severity-${rec.severity || 'CRITICAL'}`;
+            modalSeverityBadge.textContent = rec.severity || "CRITICAL";
+            modalAttackTitle.textContent = `${attackName} - Forensic Evidence`;
+            modalRecordId.textContent = `Record #${rec.record_id}`;
+
+            modalExplanationSummary.textContent = exp.summary || `Flow #${rec.record_id} was identified as ${attackName} by the detection engines with ${rec.ml_confidence_pct}% model confidence.`;
+
+            // Populate Root Causes / Reasons List
+            modalReasonsList.innerHTML = "";
+            const reasons = exp.primary_reasons && exp.primary_reasons.length > 0 
+                ? exp.primary_reasons 
+                : [
+                    `ML Model evaluated non-linear pattern indicating ${attackName} with ${rec.ml_confidence_pct}% confidence`,
+                    `Traffic exhibited anomalous packet/flow timing on port ${rec.dest_port}`
+                ];
+
+            reasons.forEach(r => {
+                const li = document.createElement("li");
+                li.innerHTML = `<strong>Reason:</strong> ${r}`;
+                modalReasonsList.appendChild(li);
+            });
+
+            // Populate Key Flow Metrics Comparison
+            modalFeaturesGrid.innerHTML = "";
+            const topFeatures = exp.top_features || [
+                { name: "Destination Port", value: String(rec.dest_port), normal_range: "Standard service ports" },
+                { name: "Flow Duration", value: `${Math.round(rec.flow_duration_us).toLocaleString()} µs`, normal_range: "> 1,000 µs normal" },
+                { name: "Total Fwd Packets", value: String(rec.total_fwd_pkts), normal_range: "1 - 15 packets" },
+                { name: "Flow Bytes/s", value: `${Math.round(rec.flow_bytes_per_sec).toLocaleString()} B/s`, normal_range: "< 100 KB/s normal" }
+            ];
+
+            topFeatures.forEach(feat => {
+                const card = document.createElement("div");
+                card.className = "metric-compare-card";
+                card.innerHTML = `
+                    <div class="metric-compare-name">${feat.name}</div>
+                    <div class="metric-compare-val">${feat.value}</div>
+                    <div class="metric-compare-baseline">Normal: ${feat.normal_range}</div>
+                `;
+                modalFeaturesGrid.appendChild(card);
+            });
+
+            // Dual-Engine consensus
+            modalMlVerdict.textContent = rec.ml_verdict || "ATTACK";
+            modalMlVerdict.style.color = (rec.ml_verdict === "ATTACK") ? "#ef4444" : "#10b981";
+            modalMlConfidence.textContent = `Model Confidence: ${rec.ml_confidence_pct}%`;
+
+            modalRuleVerdict.textContent = rec.rule_verdict || "ATTACK";
+            modalRuleVerdict.style.color = (rec.rule_verdict === "ATTACK") ? "#ef4444" : "#10b981";
+            modalRuleName.textContent = `Triggered: ${rec.rule_triggered || 'NO_RULE_TRIGGERED'}`;
+
+            attackModal.classList.remove("hidden");
+        }
+
         // Render Evidence Table
         evidenceTableBody.innerHTML = "";
         if (data.suspicious_records.length === 0) {
-            evidenceTableBody.innerHTML = `<tr><td colspan="9" style="text-align:center; padding: 2rem;">No suspicious flow records detected. All traffic evaluated as BENIGN.</td></tr>`;
+            evidenceTableBody.innerHTML = `<tr><td colspan="10" style="text-align:center; padding: 2rem;">No suspicious flow records detected. All traffic evaluated as BENIGN.</td></tr>`;
         } else {
             data.suspicious_records.forEach(rec => {
                 const tr = document.createElement("tr");
+                tr.className = "clickable-row";
+                const attackLabel = rec.attack_type || "Suspicious Attack";
                 tr.innerHTML = `
                     <td>#${rec.record_id}</td>
                     <td><span class="badge-severity severity-${rec.severity}">${rec.severity}</span></td>
+                    <td><strong style="color: var(--accent-cyan);">${attackLabel}</strong></td>
                     <td>${rec.dest_port}</td>
                     <td>${Math.round(rec.flow_duration_us).toLocaleString()}</td>
                     <td>${rec.total_fwd_pkts}</td>
                     <td>${Math.round(rec.flow_bytes_per_sec).toLocaleString()}</td>
                     <td><span style="color:${rec.rule_verdict === 'ATTACK' ? '#ef4444' : '#10b981'}">${rec.rule_verdict}</span></td>
-                    <td><span style="color:${rec.ml_verdict === 'ATTACK' ? '#ef4444' : '#10b981'}">${rec.ml_verdict}</span></td>
                     <td><strong>${rec.ml_confidence_pct}%</strong></td>
+                    <td><span class="view-details-link">Inspect Reasons 🔍</span></td>
                 `;
+                tr.addEventListener("click", () => {
+                    openAttackModal(rec);
+                });
                 evidenceTableBody.appendChild(tr);
             });
         }

@@ -121,7 +121,7 @@
             <div class="panel-header flex-between">
                 <div>
                     <h2>Suspicious Flow Records & Forensic Evidence</h2>
-                    <p>Detailed breakdown of detected intrusions, triggered heuristics, and machine learning confidence.</p>
+                    <p>Detailed breakdown of detected intrusions. <strong style="color: var(--accent-cyan); cursor: pointer;">💡 Click any row to inspect why it was flagged and view root-cause reasons.</strong></p>
                 </div>
                 <div id="attack-breakdown-tags" class="attack-tags-container"></div>
             </div>
@@ -132,13 +132,14 @@
                         <tr>
                             <th># ID</th>
                             <th>Severity</th>
+                            <th>Attack Classification</th>
                             <th>Target Port</th>
                             <th>Duration (µs)</th>
                             <th>Total Packets</th>
                             <th>Flow Bytes/s</th>
                             <th>Rule Verdict</th>
-                            <th>ML Verdict</th>
                             <th>ML Confidence</th>
+                            <th>Action</th>
                         </tr>
                     </thead>
                     <tbody id="evidence-table-body">
@@ -149,6 +150,75 @@
         </section>
 
     </main>
+
+    <!-- Forensic Attack Detail Modal -->
+    <div id="attack-modal" class="modal-overlay hidden">
+        <div class="modal-container">
+            <div class="modal-header">
+                <div class="modal-title-group">
+                    <span id="modal-severity-badge" class="badge-severity severity-CRITICAL">CRITICAL</span>
+                    <h2 id="modal-attack-title">Attack Forensic Analysis</h2>
+                    <span id="modal-record-id" class="modal-record-tag">Record #1</span>
+                </div>
+                <button id="modal-close-btn" class="modal-close-btn" aria-label="Close modal">&times;</button>
+            </div>
+
+            <div class="modal-body">
+                <!-- Why It's Classified Summary -->
+                <div class="modal-card primary-card">
+                    <div class="card-icon">🎯</div>
+                    <div>
+                        <h4 class="card-title">Detection Verdict & Why It's Classified</h4>
+                        <p id="modal-explanation-summary" class="card-text">
+                            Loading explanation...
+                        </p>
+                    </div>
+                </div>
+
+                <!-- Specific Root Causes / Reasons -->
+                <div class="modal-section">
+                    <h3 class="section-title">🔍 Identified Attack Indicators & Technical Reasons</h3>
+                    <ul id="modal-reasons-list" class="reasons-list">
+                        <!-- Populated by JS -->
+                    </ul>
+                </div>
+
+                <!-- Deep Flow Metrics Comparison -->
+                <div class="modal-section">
+                    <h3 class="section-title">📊 Key Flow Metrics vs Normal Baseline</h3>
+                    <div class="metrics-comparison-grid" id="modal-features-grid">
+                        <!-- Populated by JS -->
+                    </div>
+                </div>
+
+                <!-- Dual-Engine Consensus Breakdown -->
+                <div class="modal-section">
+                    <h3 class="section-title">🛡️ Dual-Engine Consensus Breakdown</h3>
+                    <div class="consensus-grid">
+                        <div class="engine-box">
+                            <span class="engine-label">🤖 Random Forest Model (Authentic CIC-IDS2017)</span>
+                            <div class="engine-stat">
+                                <span id="modal-ml-verdict" class="engine-verdict">ATTACK</span>
+                                <span id="modal-ml-confidence" class="engine-sub">Confidence: 99.8%</span>
+                            </div>
+                        </div>
+                        <div class="engine-box">
+                            <span class="engine-label">🛡️ Heuristic Signature Rule Engine</span>
+                            <div class="engine-stat">
+                                <span id="modal-rule-verdict" class="engine-verdict">ATTACK</span>
+                                <span id="modal-rule-name" class="engine-sub">Rule: RULE_DDOS_HIGH_SYN_RATE</span>
+                            </div>
+                        </div>
+                    </div>
+                </div>
+            </div>
+
+            <div class="modal-footer">
+                <span class="modal-footer-note">Source: Authentic CIC-IDS2017 Trained Model</span>
+                <button id="modal-dismiss-btn" class="btn btn-outline">Close Details</button>
+            </div>
+        </div>
+    </div>
 
     <!-- Footer -->
     <footer class="footer">
