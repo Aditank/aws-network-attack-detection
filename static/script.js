@@ -20,6 +20,39 @@ document.addEventListener("DOMContentLoaded", () => {
     const attackBreakdownTags = document.getElementById("attack-breakdown-tags");
     const evidenceTableBody = document.getElementById("evidence-table-body");
 
+    // Modal elements
+    const attackModal = document.getElementById("attack-modal");
+    const modalCloseBtn = document.getElementById("modal-close-btn");
+    const modalDismissBtn = document.getElementById("modal-dismiss-btn");
+    const modalSeverityBadge = document.getElementById("modal-severity-badge");
+    const modalAttackTitle = document.getElementById("modal-attack-title");
+    const modalRecordId = document.getElementById("modal-record-id");
+    const modalExplanationSummary = document.getElementById("modal-explanation-summary");
+    const modalReasonsList = document.getElementById("modal-reasons-list");
+    const modalFeaturesGrid = document.getElementById("modal-features-grid");
+    const modalMlVerdict = document.getElementById("modal-ml-verdict");
+    const modalMlConfidence = document.getElementById("modal-ml-confidence");
+    const modalRuleVerdict = document.getElementById("modal-rule-verdict");
+    const modalRuleName = document.getElementById("modal-rule-name");
+
+    function closeModal() {
+        if (attackModal) attackModal.classList.add("hidden");
+    }
+
+    if (modalCloseBtn) modalCloseBtn.addEventListener("click", closeModal);
+    if (modalDismissBtn) modalDismissBtn.addEventListener("click", closeModal);
+    if (attackModal) {
+        attackModal.addEventListener("click", (e) => {
+            if (e.target === attackModal) closeModal();
+        });
+    }
+
+    document.addEventListener("keydown", (e) => {
+        if (e.key === "Escape" && attackModal && !attackModal.classList.contains("hidden")) {
+            closeModal();
+        }
+    });
+
     let currentFile = null;
 
     // Drag & drop listeners
@@ -147,39 +180,6 @@ document.addEventListener("DOMContentLoaded", () => {
                 attackBreakdownTags.appendChild(tag);
             }
         }
-
-        // Modal elements
-        const attackModal = document.getElementById("attack-modal");
-        const modalCloseBtn = document.getElementById("modal-close-btn");
-        const modalDismissBtn = document.getElementById("modal-dismiss-btn");
-        const modalSeverityBadge = document.getElementById("modal-severity-badge");
-        const modalAttackTitle = document.getElementById("modal-attack-title");
-        const modalRecordId = document.getElementById("modal-record-id");
-        const modalExplanationSummary = document.getElementById("modal-explanation-summary");
-        const modalReasonsList = document.getElementById("modal-reasons-list");
-        const modalFeaturesGrid = document.getElementById("modal-features-grid");
-        const modalMlVerdict = document.getElementById("modal-ml-verdict");
-        const modalMlConfidence = document.getElementById("modal-ml-confidence");
-        const modalRuleVerdict = document.getElementById("modal-rule-verdict");
-        const modalRuleName = document.getElementById("modal-rule-name");
-
-        function closeModal() {
-            if (attackModal) attackModal.classList.add("hidden");
-        }
-
-        if (modalCloseBtn) modalCloseBtn.addEventListener("click", closeModal);
-        if (modalDismissBtn) modalDismissBtn.addEventListener("click", closeModal);
-        if (attackModal) {
-            attackModal.addEventListener("click", (e) => {
-                if (e.target === attackModal) closeModal();
-            });
-        }
-
-        document.addEventListener("keydown", (e) => {
-            if (e.key === "Escape" && attackModal && !attackModal.classList.contains("hidden")) {
-                closeModal();
-            }
-        });
 
         function openAttackModal(rec) {
             const exp = rec.explanation || {};

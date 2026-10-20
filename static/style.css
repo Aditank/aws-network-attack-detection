@@ -712,3 +712,8 @@ body {
     color: var(--text-muted);
 }
 
+/* Visibility Utilities */
+.hidden {
+    display: none !important;
+}
+
